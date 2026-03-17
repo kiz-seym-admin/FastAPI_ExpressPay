@@ -30,7 +30,7 @@ jobs:
 
       - name: Docker Compose Down
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ vars.DEV_HOST }} << 'EOF'
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no {{ vars.DEV_USER }}@${{ vars.DEV_HOST }} << 'EOF'
             cd ${{ vars.PROJECT_PATH }}
             docker compose down
           EOF
@@ -47,11 +47,11 @@ jobs:
             --exclude='*.log' \
             --exclude='.venv' \
             --exclude='venv' \
-            ./ ${{ vars.DEV_HOST }}:${{ vars.PROJECT_PATH }}/
+            ./ tox@${{ vars.DEV_HOST }}:${{ vars.PROJECT_PATH }}/
 
       - name: Docker Compose Up
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ vars.DEV_HOST }} << 'EOF'
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ vars.DEV_USER }}@${{ vars.DEV_HOST }} << 'EOF'
             cd ${{ vars.PROJECT_PATH }}
             docker compose up -d --build
           EOF
