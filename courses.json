@@ -1,0 +1,56 @@
+[
+  {
+    "id": 1,
+    "name": "Starter",
+    "description": "1 time payment for 1 month access to full library for 1 user. MKIZ + KizFit programms (100+ classes) on Rus, Eng, Spain languages.",
+    "price": 145.0,
+    "duration_weeks": 4,
+    "is_active": true,
+    "created_at": "2026-03-01T12:00:00"
+  },
+  {
+    "id": 2,
+    "name": "Standart",
+    "description": "1 time payment for 3 month access to full library for 1 user. MKIZ + KizFit programms (100+ classes) on Rus, Eng, Spain languages.",
+    "price": 445.0,
+    "duration_weeks": 12,
+    "is_active": true,
+    "created_at": "2026-03-01T12:00:00"
+  },
+  {
+    "id": 3,
+    "name": "Extra",
+    "description": "1 time payment for 6 month access to full library for 1 user. MKIZ + KizFit programms (100+ classes) on Rus, Eng, Spain languages.",
+    "price": 420.0,
+    "duration_weeks": 24,
+    "is_active": true,
+    "created_at": "2026-03-01T12:00:00"
+  },
+  {
+    "id": 4,
+    "name": "Teacher",
+    "description": "1 time payment for 2 month access to 1 module (4 classes) for 1 user. MKIZ + KizFit programms (100+ classes) on Rus, Eng, Spain languages. The next MODULEs you will be able to buy inside of the 1st MODULE",
+    "price": 350.0,
+    "duration_weeks": 8,
+    "is_active": true,
+    "created_at": "2026-03-01T12:00:00"
+  },
+  {
+    "id": 5,
+    "name": "Teacher Pro",
+    "description": "1 time payment for 6 month access to 4 modules (16 classes in total) for 1 user. MKIZ + KizFit programms (100+ classes) on Rus, Eng, Spain languages. The next MODULEs you will be able to buy inside of the 1st MODULE",
+    "price": 890.0,
+    "duration_weeks": 24,
+    "is_active": true,
+    "created_at": "2026-03-01T12:00:00"
+  },
+  {
+    "id": 6,
+    "is_active": true,
+    "created_at": "2026-03-01T15:16:01",
+    "name": "Updated",
+    "description": "string",
+    "price": 0.0,
+    "duration_weeks": 0
+  }
+]
