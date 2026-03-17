@@ -96,7 +96,7 @@ app = FastAPI(
 # COURSES
 # ════════════════════════════════════════════════════════
 
-@app.get("/courses", response_model=List[CourseResponse], tags=["Подписки"])
+@app.get("/active_courses", response_model=List[CourseResponse], tags=["Подписки"])
 def list_courses():
     return storage.get_all_courses()
 

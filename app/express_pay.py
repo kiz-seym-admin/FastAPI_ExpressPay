@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 EP_TOKEN       = os.getenv("EP_TOKEN",       "a75b74cbcfe446509e8ee874f421bd64")
 EP_SECRET_WORD = os.getenv("EP_SECRET_WORD", "")
 EP_IS_TEST     = os.getenv("EP_IS_TEST",     "true").lower() == "true"
-BASE_URL       = os.getenv("BASE_URL",       "http://localhost:8000")
+BASE_URL       = os.getenv("BASE_URL",       "http://8000:8000")
 
 _PROD_API  = "https://api.express-pay.by/v1"
 _SAND_API  = "https://sandbox-api.express-pay.by/v1"
