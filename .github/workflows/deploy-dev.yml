@@ -1,0 +1,64 @@
+name: Deploy to Dev Server
+
+on:
+  push:
+    branches:
+      - dev
+  pull_request:
+    branches:
+      - dev
+    types:
+      - closed
+
+jobs:
+  deploy:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    # Only run on push or when PR is merged
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.KIZOMBA_CI_SSH_PRIVATE }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ vars.DEV_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Docker Compose Down
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ vars.DEV_USER }}@${{ vars.DEV_HOST }} << 'EOF'
+            cd ${{ vars.PROJECT_PATH }}
+            docker compose down
+          EOF
+
+      - name: Sync files with rsync
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='.env' \
+            --exclude='*.log' \
+            --exclude='.venv' \
+            --exclude='venv' \
+            ./ tox@${{ vars.DEV_HOST }}:${{ vars.PROJECT_PATH }}/
+
+      - name: Docker Compose Up
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ vars.DEV_USER }}@${{ vars.DEV_HOST }} << 'EOF'
+            cd ${{ vars.PROJECT_PATH }}
+            docker compose up -d --build
+          EOF
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+      - name: Deployment completed
+        run: echo "✅ Deployment to dev server completed successfully"
