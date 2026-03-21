@@ -1,23 +1,52 @@
 services:
+  db:
+    image: mysql:8.4
+    container_name: expresspay_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootsecret
+      MYSQL_DATABASE: expresspay
+      MYSQL_USER: fastapi
+      MYSQL_PASSWORD: secret
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "fastapi", "-psecret"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   api:
     build: .
     container_name: fastapi_expresspay
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       - "8000:8000"
     volumes:
-      - json_data:/data                          # volume для users.json и payments.json
-      - ./courses.json:/data/courses.json        # courses.json монтируется из папки проекта
+      - json_data:/data
+      - ./courses.json:/data/courses.json
     environment:
       - TZ=Europe/Minsk
+      - MYSQL_HOST=db
+      - MYSQL_PORT=3306
+      - MYSQL_USER=fastapi
+      - MYSQL_PASSWORD=secret
+      - MYSQL_DB=expresspay
     env_file:
       - .env
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://8000:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
 volumes:
+  mysql_data:
+    driver: local
   json_data:
     driver: local

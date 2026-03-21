@@ -1,11 +1,12 @@
 from typing import List, Optional
 from pydantic import BaseModel, EmailStr
+from datetime import datetime
 
 
 class CourseCreate(BaseModel):
     name: str
     description: Optional[str] = None
-    price: float          # в BYN: 80.00
+    price: float
     duration_weeks: Optional[int] = None
 
 
@@ -27,12 +28,14 @@ class UserCreate(BaseModel):
 
 
 class UserResponse(BaseModel):
-    id: int
+    UserID: int
     email: str
     first_name: str
     last_name: str
     phone: Optional[str] = None
-    created_at: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class PaymentCreate(BaseModel):
@@ -44,46 +47,40 @@ class PaymentCreate(BaseModel):
 
 
 class PaymentInitResponse(BaseModel):
-    id: int
-    tracking_id: str
-    ep_invoice_no: Optional[int] = None
-    form_url: Optional[str] = None      # URL страницы оплаты Express-Pay
-    qr_url: str                         # GET /payments/{tracking_id}/qr
-    status: str
+    PaymentID: int
+    OrderNum: str
+    FormURL: Optional[str] = None
+    qr_url: str
+    Status: str
     is_test: bool
     amount: float
     course_name: str
 
 
 class PaymentRecord(BaseModel):
-    id: int
-    tracking_id: str
-    ep_invoice_no: Optional[int] = None
-    course_id: Optional[int] = None
-    course_name: Optional[str] = None
-    amount: Optional[float] = None
-    description: Optional[str] = None
-    user_id: Optional[int] = None
-    customer_email: Optional[str] = None
-    customer_first_name: Optional[str] = None
-    customer_last_name: Optional[str] = None
-    form_url: Optional[str] = None
-    status: str
-    is_test: bool
-    webhook_received: bool
-    qr_generated: bool
-    created_at: str
-    updated_at: Optional[str] = None
+    PaymentID: int
+    OrderNum: str
+    UserID: int
+    SubscriptionID: int
+    FormURL: Optional[str] = None
+    Status: str
+    created_at: datetime
+    expired_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
 
 
-# Статусы счёта по карте Express-Pay
-# 0 – зарегистрирован, не оплачен
-# 1 – предавторизация
-# 2 – полная авторизация (оплачен)
-# 3 – авторизация отменена
-# 4 – возврат
-# 5 – инициирована авторизация через ACS
-# 6 – авторизация отклонена
+class UserWithPayments(BaseModel):
+    UserID: int
+    email: str
+    first_name: str
+    last_name: str
+    payments: List[PaymentRecord] = []
+
+    model_config = {"from_attributes": True}
+
+
+# Статусы счёта Express-Pay
 EP_STATUS_MAP = {
     0: "pending",
     1: "preauth",
