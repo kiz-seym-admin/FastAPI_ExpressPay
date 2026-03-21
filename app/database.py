@@ -11,6 +11,9 @@ MySQL БД через SQLAlchemy 2 (async) + aiomysql.
 
 from __future__ import annotations
 from datetime import datetime, timedelta
+from typing import Optional
+from zoneinfo import ZoneInfo
+
 from sqlalchemy import (
     BigInteger, String, Integer, DateTime,
     ForeignKey, func, Text,
@@ -43,10 +46,10 @@ class Base(DeclarativeBase):
 class User(Base):
     __tablename__ = "users"
 
-    UserID: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    first_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    last_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    UserID: Mapped[int] = mapped_column(BigInteger, unique=True, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    first_name: Mapped[str] = mapped_column(String(255), nullable=True)
+    last_name: Mapped[str] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -90,7 +93,7 @@ class Payment(Base):
         String(50), nullable=False, default="pending",
         comment="pending / successful / cancelled / refunded / declined / expired"
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(tz=ZoneInfo("Europe/Minsk")))
     expired_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True,
         comment="Дата истечения подписки = created_at + duration_weeks курса"

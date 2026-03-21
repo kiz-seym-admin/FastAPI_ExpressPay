@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from . import storage
-from .database import init_db, get_db, User, Payment, calc_expired_at
+from .database import init_db, get_db, User, Payment, calc_expired_at, async_session_maker
 from .express_pay import (
     BASE_URL, EP_IS_TEST,
     create_card_invoice, get_card_invoice_status,
@@ -51,6 +51,19 @@ async def lifespan(app: FastAPI):
     try:
         res = await run_startup_test()
         if res["ok"]:
+            async with async_session_maker() as session:
+                # Ищем или создаём системного пользователя
+                test_user = ...  # email: startup-test@system.local
+
+                test_payment = Payment(
+                    OrderNum=str(res["invoice_no"]),  # InvoiceNo из Express-Pay
+                    UserID=test_user.UserID,
+                    SubscriptionID=0,  # 0 = системный тест
+                    FormURL=res.get("form_url"),
+                    Status="pending",
+                )
+                session.add(test_payment)
+                await session.commit()
             logger.info(f"✅ Тестовый счёт: InvoiceNo={res['invoice_no']} FormUrl={res.get('form_url') or '(sandbox)'}")
         else:
             logger.warning(f"⚠️ Тестовый счёт: {res.get('error', res.get('raw'))}")
@@ -130,7 +143,7 @@ def activate_course(course_id: int):
 # USERS (MySQL)
 # ════════════════════════════════════════════════════════
 
-@app.get("/users", response_model=List[UserResponse], tags=["Пользователи"])
+@app.get("/users-list", response_model=List[UserResponse], tags=["Пользователи"])
 async def list_users(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User))
     return result.scalars().all()
@@ -141,7 +154,7 @@ async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
     if not user: raise HTTPException(404, "Пользователь не найден")
     return user
 
-@app.post("/users", response_model=UserResponse, tags=["Пользователи"], status_code=201)
+@app.post("/users-create", response_model=UserResponse, tags=["Пользователи"], status_code=201)
 async def create_user(body: UserCreate, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == body.email.lower()))
     existing = result.scalar_one_or_none()
@@ -341,12 +354,12 @@ def _page(title, msg, color, extra=""):
 <body style="font-family:sans-serif;text-align:center;padding:60px">
 <h1 style="color:{color}">{msg}</h1>{extra}</body></html>""")
 
-@app.get("/payment/success", response_class=HTMLResponse, tags=["Страницы"])
+@app.get("/payment-result/success", response_class=HTMLResponse, tags=["Страницы"])
 def payment_success(): return _page("Оплата", "✅ Оплата прошла успешно!", "green")
 
-@app.get("/payment/fail", response_class=HTMLResponse, tags=["Страницы"])
+@app.get("/payment-result/fail", response_class=HTMLResponse, tags=["Страницы"])
 def payment_fail(): return _page("Ошибка", "❌ Оплата не выполнена", "red")
 
-@app.get("/payment/paid", response_class=HTMLResponse, tags=["Страницы"])
+@app.get("/payment-result/paid", response_class=HTMLResponse, tags=["Страницы"])
 def payment_paid(): return _page("Тест", "✅ Тестовый платёж — ОПЛАЧЕНО", "green",
                                   "<p style='color:gray'>Sandbox</p>")

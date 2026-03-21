@@ -22,8 +22,8 @@ class CourseResponse(BaseModel):
 
 class UserCreate(BaseModel):
     email: EmailStr
-    first_name: str
-    last_name: str
+    first_name: Optional[str]
+    last_name: Optional[str]
     phone: Optional[str] = None
 
 
@@ -41,8 +41,8 @@ class UserResponse(BaseModel):
 class PaymentCreate(BaseModel):
     course_id: int
     customer_email: EmailStr
-    customer_first_name: str
-    customer_last_name: str
+    customer_first_name: Optional[str] = None
+    customer_last_name: Optional[str] = None
     customer_phone: Optional[str] = None
 
 
