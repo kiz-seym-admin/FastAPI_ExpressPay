@@ -18,10 +18,9 @@ from .express_pay import (
 from .qr import base64_to_png, generate_local_qr
 from .schemas import (
     CourseCreate, CourseResponse,
-    UserCreate, UserResponse,
-    UserWithPayments,
+    UserCreate, UserResponse, UserWithPayments,
     PaymentCreate, PaymentInitResponse, PaymentRecord,
-    EP_STATUS_MAP,
+    EP_STATUS_MAP, BLOCKED_MSG,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -36,7 +35,6 @@ def _ensure_courses_file():
     if not os.path.exists(COURSES_FILE):
         with open(COURSES_FILE, "w", encoding="utf-8") as f:
             json.dump([], f, indent=2, ensure_ascii=False)
-        logger.info(f"📄 Создан пустой {COURSES_FILE}.")
     else:
         logger.info(f"📄 Загружено курсов: {len(storage.get_all_courses(only_active=False))}")
 
@@ -51,23 +49,36 @@ async def lifespan(app: FastAPI):
     try:
         res = await run_startup_test()
         if res["ok"]:
+            logger.info(f"✅ InvoiceNo= {res['invoice_no']}")
+            # Сохраняем тестовый платёж в БД как обычный
             async with async_session_maker() as session:
-                # Ищем или создаём системного пользователя
-                test_user = ...  # email: startup-test@system.local
-
+                result = await session.execute(
+                    select(User).where(User.email == "startup-test@system.local")
+                )
+                test_user = result.scalar_one_or_none()
+                if not test_user:
+                    test_user = User(
+                        email="startup-test@system.local",
+                        first_name="Startup",
+                        last_name="Test",
+                    )
+                    session.add(test_user)
+                    await session.flush()
                 test_payment = Payment(
-                    OrderNum=str(res["invoice_no"]),  # InvoiceNo из Express-Pay
+                    OrderNum=str(res["invoice_no"]),
                     UserID=test_user.UserID,
-                    SubscriptionID=0,  # 0 = системный тест
+                    SubscriptionID=0,
                     FormURL=res.get("form_url"),
                     Status="pending",
+                    expired_at=None,
                 )
                 session.add(test_payment)
                 await session.commit()
-            logger.info(f"✅ Тестовый счёт: InvoiceNo={res['invoice_no']} FormUrl={res.get('form_url') or '(sandbox)'}")
+                logger.info(f"💾 Тестовый платёж сохранён: PaymentID={test_payment.PaymentID}")
         else:
             logger.warning(f"⚠️ Тестовый счёт: {res.get('error', res.get('raw'))}")
     except Exception as exc:
+        logger.error(f"❌ Startup test: {exc}")
         logger.error(f"❌ Startup test: {exc}")
     yield
     logger.info("🛑 Остановлен.")
@@ -76,9 +87,17 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="FastAPI-ExpressPay",
     description="Backend оплаты курсов — Express-Pay · MySQL · QR-коды",
-    version="3.0.0",
+    version="3.1.0",
     lifespan=lifespan,
 )
+
+
+# ── Вспомогательная проверка блокировки ──────────────────────────────────────
+
+def _check_blocked(user: User) -> None:
+    """Бросает 403 если пользователь заблокирован."""
+    if user.is_blocked or user.deletion_requested:
+        raise HTTPException(status_code=403, detail=BLOCKED_MSG)
 
 
 # ════════════════════════════════════════════════════════
@@ -87,7 +106,7 @@ app = FastAPI(
 
 @app.get("/health", tags=["Служебные"])
 async def health(db: AsyncSession = Depends(get_db)):
-    users = (await db.execute(select(User))).scalars().all()
+    users    = (await db.execute(select(User))).scalars().all()
     payments = (await db.execute(select(Payment))).scalars().all()
     return {
         "status": "ok",
@@ -103,12 +122,10 @@ async def health(db: AsyncSession = Depends(get_db)):
 # ════════════════════════════════════════════════════════
 
 @app.get("/active_courses", response_model=List[CourseResponse], tags=["Подписки"])
-def list_courses():
-    return storage.get_all_courses()
+def list_courses(): return storage.get_all_courses()
 
 @app.get("/courses/all/list", response_model=List[CourseResponse], tags=["Подписки"])
-def list_all_courses():
-    return storage.get_all_courses(only_active=False)
+def list_all_courses(): return storage.get_all_courses(only_active=False)
 
 @app.get("/courses/{course_id}", response_model=CourseResponse, tags=["Подписки"])
 def get_course(course_id: int):
@@ -117,8 +134,7 @@ def get_course(course_id: int):
     return c
 
 @app.post("/courses", response_model=CourseResponse, tags=["Подписки"], status_code=201)
-def create_course(body: CourseCreate):
-    return storage.create_course(body.model_dump())
+def create_course(body: CourseCreate): return storage.create_course(body.model_dump())
 
 @app.patch("/courses/{course_id}", response_model=CourseResponse, tags=["Подписки"])
 def update_course(course_id: int, body: CourseCreate):
@@ -143,7 +159,7 @@ def activate_course(course_id: int):
 # USERS (MySQL)
 # ════════════════════════════════════════════════════════
 
-@app.get("/users-list", response_model=List[UserResponse], tags=["Пользователи"])
+@app.get("/users", response_model=List[UserResponse], tags=["Пользователи"])
 async def list_users(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User))
     return result.scalars().all()
@@ -154,11 +170,13 @@ async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
     if not user: raise HTTPException(404, "Пользователь не найден")
     return user
 
-@app.post("/users-create", response_model=UserResponse, tags=["Пользователи"], status_code=201)
+@app.post("/users", response_model=UserResponse, tags=["Пользователи"], status_code=201)
 async def create_user(body: UserCreate, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == body.email.lower()))
     existing = result.scalar_one_or_none()
-    if existing: return existing
+    if existing:
+        _check_blocked(existing)   # ← блокировка при попытке войти
+        return existing
     user = User(email=body.email.lower(), first_name=body.first_name,
                 last_name=body.last_name, phone=body.phone)
     db.add(user); await db.commit(); await db.refresh(user)
@@ -166,11 +184,157 @@ async def create_user(body: UserCreate, db: AsyncSession = Depends(get_db)):
 
 @app.get("/users/{user_id}/payments", response_model=UserWithPayments, tags=["Пользователи"])
 async def user_payments(user_id: int, db: AsyncSession = Depends(get_db)):
-    """Все когда-либо совершённые покупки пользователя (через FK UserID)."""
+    """Все когда-либо совершённые покупки пользователя."""
     user = await db.get(User, user_id)
     if not user: raise HTTPException(404, "Пользователь не найден")
+    _check_blocked(user)
     return user
 
+
+# ════════════════════════════════════════════════════════
+# ADMIN — управление пользователями
+# ════════════════════════════════════════════════════════
+
+@app.post("/admin/users/{user_id}/block", tags=["Администраторы"])
+async def block_user(user_id: int, db: AsyncSession = Depends(get_db)):
+    """Заблокировать пользователя (мгновенно, без удаления)."""
+    user = await db.get(User, user_id)
+    if not user: raise HTTPException(404, "Пользователь не найден")
+    user.is_blocked = True
+    await db.commit()
+    return {"detail": f"Пользователь {user.email} заблокирован"}
+
+
+@app.post("/admin/users/{user_id}/unblock", tags=["Администраторы"])
+async def unblock_user(user_id: int, db: AsyncSession = Depends(get_db)):
+    """Разблокировать пользователя."""
+    user = await db.get(User, user_id)
+    if not user: raise HTTPException(404, "Пользователь не найден")
+    user.is_blocked = False
+    user.deletion_requested = False
+    user.deletion_requested_at = None
+    await db.commit()
+    return {"detail": f"Пользователь {user.email} разблокирован"}
+
+
+@app.post("/admin/users/{user_id}/request-delete", tags=["Администраторы"])
+async def request_delete_user(user_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Шаг 1: запросить удаление пользователя.
+    Пользователь блокируется и помечается на удаление.
+    Фактическое удаление происходит только после confirm-delete.
+    """
+    user = await db.get(User, user_id)
+    if not user: raise HTTPException(404, "Пользователь не найден")
+    user.is_blocked = True
+    user.deletion_requested = True
+    user.deletion_requested_at = datetime.now()
+    await db.commit()
+    return {
+        "detail": (
+            f"Пользователь {user.email} заблокирован и помечен на удаление. "
+            "Подтвердите удаление через POST /admin/users/{id}/confirm-delete"
+        )
+    }
+
+
+@app.post("/admin/users/{user_id}/confirm-delete", tags=["Администраторы"])
+async def confirm_delete_user(user_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Шаг 2: администратор подтверждает удаление.
+    Удаляет пользователя и все его платежи (CASCADE).
+    Работает только если deletion_requested=True.
+    """
+    user = await db.get(User, user_id)
+    if not user: raise HTTPException(404, "Пользователь не найден")
+    if not user.deletion_requested:
+        raise HTTPException(400, "Сначала запросите удаление через /request-delete")
+    email = user.email
+    await db.delete(user)
+    await db.commit()
+    return {"detail": f"Пользователь {email} и все его данные удалены"}
+
+
+@app.get("/admin/users/pending-delete", response_model=List[UserResponse], tags=["Администраторы"])
+async def list_pending_delete(db: AsyncSession = Depends(get_db)):
+    """Список пользователей, ожидающих подтверждения удаления."""
+    result = await db.execute(select(User).where(User.deletion_requested == True))
+    return result.scalars().all()
+
+
+
+# ════════════════════════════════════════════════════════
+# УПРАВЛЕНИЕ АККАУНТОМ (пользователь)
+# ════════════════════════════════════════════════════════
+
+@app.post("/users/{user_id}/delete-request", tags=["Пользователи"])
+async def request_account_delete(user_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Пользователь нажал кнопку 'Удалить аккаунт'.
+    Аккаунт блокируется и помечается на удаление — данные остаются в БД.
+    Фактическое удаление происходит только после подтверждения администратора.
+    """
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    user.is_blocked = True
+    user.deletion_requested = True
+    user.deletion_requested_at = datetime.now()
+    await db.commit()
+    return {"detail": "Ваш аккаунт заблокирован и отправлен на удаление. Обратитесь к администратору если это ошибка."}
+
+
+# ════════════════════════════════════════════════════════
+# АДМИНИСТРАТОРЫ
+# ════════════════════════════════════════════════════════
+
+@app.get("/admin/users/pending-delete", response_model=List[UserResponse], tags=["Администраторы"])
+async def list_pending_delete(db: AsyncSession = Depends(get_db)):
+    """Список пользователей, ожидающих подтверждения удаления."""
+    result = await db.execute(select(User).where(User.deletion_requested == True))
+    return result.scalars().all()
+
+
+@app.post("/admin/users/{user_id}/block", tags=["Администраторы"])
+async def block_user(user_id: int, db: AsyncSession = Depends(get_db)):
+    """Заблокировать пользователя без удаления."""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    user.is_blocked = True
+    await db.commit()
+    return {"detail": f"Пользователь {user.email} заблокирован"}
+
+
+@app.post("/admin/users/{user_id}/unblock", tags=["Администраторы"])
+async def unblock_user(user_id: int, db: AsyncSession = Depends(get_db)):
+    """Разблокировать пользователя и отменить запрос на удаление."""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    user.is_blocked = False
+    user.deletion_requested = False
+    user.deletion_requested_at = None
+    await db.commit()
+    return {"detail": f"Пользователь {user.email} разблокирован"}
+
+
+@app.post("/admin/users/{user_id}/confirm-delete", tags=["Администраторы"])
+async def confirm_delete_user(user_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Администратор подтверждает удаление.
+    Удаляет пользователя и все его платежи (CASCADE).
+    Работает только если deletion_requested=True.
+    """
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    if not user.deletion_requested:
+        raise HTTPException(400, "Пользователь не запрашивал удаление. Используйте /delete-request сначала.")
+    email = user.email
+    await db.delete(user)
+    await db.commit()
+    return {"detail": f"Пользователь {email} и все его данные удалены из БД"}
 
 # ════════════════════════════════════════════════════════
 # PAYMENTS (MySQL + ExpressPay)
@@ -182,20 +346,20 @@ async def create_payment(body: PaymentCreate, db: AsyncSession = Depends(get_db)
     if not course: raise HTTPException(404, "Курс не найден")
     if not course.get("is_active", True): raise HTTPException(400, "Курс неактивен")
 
-    # upsert пользователя
     result = await db.execute(select(User).where(User.email == body.customer_email.lower()))
     user = result.scalar_one_or_none()
-    if not user:
+
+    if user:
+        _check_blocked(user)   # ← блокировка при попытке оплатить
+    else:
         user = User(email=body.customer_email.lower(), first_name=body.customer_first_name,
                     last_name=body.customer_last_name, phone=body.customer_phone)
         db.add(user); await db.flush()
 
     tracking_id = f"order-{uuid.uuid4().hex}"
-
     try:
         ep_resp = await create_card_invoice(
-            account_no=tracking_id[:30],
-            amount=course["price"],
+            account_no=tracking_id[:30], amount=course["price"],
             info=f"Оплата курса: {course['name']}",
             return_url=f"{BASE_URL}/payment/success?tid={tracking_id}",
             fail_url=f"{BASE_URL}/payment/fail?tid={tracking_id}",
@@ -204,11 +368,8 @@ async def create_payment(body: PaymentCreate, db: AsyncSession = Depends(get_db)
         logger.error(f"Express-Pay error: {exc}")
         raise HTTPException(502, f"Ошибка Express-Pay: {exc}")
 
-    # Данные из ответа Express-Pay
-    invoice_no    = ep_resp.get("InvoiceNo")       # OrderNum
-    form_url      = ep_resp.get("FormUrl") or None  # URL оплаты
-    duration_weeks = course.get("duration_weeks")
-
+    invoice_no = ep_resp.get("InvoiceNo")
+    form_url   = ep_resp.get("FormUrl") or None
     logger.info(f"💳 InvoiceNo={invoice_no} FormUrl={form_url or '(sandbox)'}")
 
     payment = Payment(
@@ -217,19 +378,16 @@ async def create_payment(body: PaymentCreate, db: AsyncSession = Depends(get_db)
         SubscriptionID=body.course_id,
         FormURL=form_url,
         Status="pending",
-        expired_at=calc_expired_at(duration_weeks),
+        expired_at=calc_expired_at(course.get("duration_weeks")),
     )
     db.add(payment); await db.commit(); await db.refresh(payment)
 
     return PaymentInitResponse(
-        PaymentID=payment.PaymentID,
-        OrderNum=payment.OrderNum,
+        PaymentID=payment.PaymentID, OrderNum=payment.OrderNum,
         FormURL=form_url or "",
         qr_url=f"{BASE_URL}/payments/{payment.OrderNum}/qr",
-        Status="pending",
-        is_test=EP_IS_TEST,
-        amount=course["price"],
-        course_name=course["name"],
+        Status="pending", is_test=EP_IS_TEST,
+        amount=course["price"], course_name=course["name"],
     )
 
 
@@ -241,12 +399,10 @@ async def get_payment_qr(order_num: str, db: AsyncSession = Depends(get_db)):
     if not payment: raise HTTPException(404, "Платёж не найден")
 
     form_url = payment.FormURL or ""
-    label = f"Подписка #{payment.SubscriptionID} — {payment.Status}"
+    label = f"Подписка #{payment.SubscriptionID}"
     png_bytes = None
-
     try:
-        invoice_int = int(payment.OrderNum)
-        b64 = await get_qr_code_base64(invoice_int)
+        b64 = await get_qr_code_base64(int(payment.OrderNum))
         if b64: png_bytes = base64_to_png(b64)
     except Exception: pass
 
@@ -260,10 +416,8 @@ async def get_payment_qr(order_num: str, db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/payments", response_model=List[PaymentRecord], tags=["Платежи"])
-async def list_payments(
-    status: Optional[str] = None, limit: int = 50,
-    db: AsyncSession = Depends(get_db)
-):
+async def list_payments(status: Optional[str] = None, limit: int = 50,
+                        db: AsyncSession = Depends(get_db)):
     q = select(Payment)
     if status: q = q.where(Payment.Status == status)
     q = q.order_by(Payment.PaymentID.desc()).limit(limit)
@@ -283,14 +437,10 @@ async def sync_payment_status(order_num: str, db: AsyncSession = Depends(get_db)
     result = await db.execute(select(Payment).where(Payment.OrderNum == order_num))
     payment = result.scalar_one_or_none()
     if not payment: raise HTTPException(404, "Платёж не найден")
-
     try:
-        invoice_int = int(order_num)
+        resp = await get_card_invoice_status(int(order_num))
     except ValueError:
-        raise HTTPException(400, "OrderNum не является числом InvoiceNo — sync невозможен")
-
-    try:
-        resp = await get_card_invoice_status(invoice_int)
+        raise HTTPException(400, "OrderNum не является числом InvoiceNo")
     except Exception as exc:
         raise HTTPException(502, f"Ошибка Express-Pay: {exc}")
 
@@ -306,11 +456,9 @@ async def sync_payment_status(order_num: str, db: AsyncSession = Depends(get_db)
     if ep_code is None:
         return {"OrderNum": order_num, "Status": payment.Status, "warning": "EP не вернул статус"}
 
-    new_status = EP_STATUS_MAP.get(int(ep_code), f"unknown_{ep_code}")
-    payment.Status = new_status
-    payment.updated_at = datetime.now()
+    payment.Status = EP_STATUS_MAP.get(int(ep_code), f"unknown_{ep_code}")
     await db.commit()
-    return {"OrderNum": order_num, "ep_code": int(ep_code), "Status": new_status}
+    return {"OrderNum": order_num, "ep_code": int(ep_code), "Status": payment.Status}
 
 
 # ════════════════════════════════════════════════════════
@@ -327,7 +475,6 @@ async def expresspay_webhook(request: Request, db: AsyncSession = Depends(get_db
         return JSONResponse({"status": "error"}, status_code=400)
 
     logger.info(f"📩 Webhook: {json.dumps(body, default=str)[:400]}")
-
     invoice_no = body.get("InvoiceNo") or body.get("invoiceNo")
     ep_status  = body.get("CardInvoiceStatus") or body.get("Status")
 
@@ -341,7 +488,6 @@ async def expresspay_webhook(request: Request, db: AsyncSession = Depends(get_db
             logger.info(f"✅ InvoiceNo={invoice_no} → {payment.Status}")
         else:
             logger.warning(f"⚠️ InvoiceNo={invoice_no} не найден")
-
     return JSONResponse({"status": "ok"})
 
 
@@ -354,12 +500,12 @@ def _page(title, msg, color, extra=""):
 <body style="font-family:sans-serif;text-align:center;padding:60px">
 <h1 style="color:{color}">{msg}</h1>{extra}</body></html>""")
 
-@app.get("/payment-result/success", response_class=HTMLResponse, tags=["Страницы"])
+@app.get("/payment/success", response_class=HTMLResponse, tags=["Страницы результата оплаты"])
 def payment_success(): return _page("Оплата", "✅ Оплата прошла успешно!", "green")
 
-@app.get("/payment-result/fail", response_class=HTMLResponse, tags=["Страницы"])
+@app.get("/payment/fail", response_class=HTMLResponse, tags=["Страницы результата оплаты"])
 def payment_fail(): return _page("Ошибка", "❌ Оплата не выполнена", "red")
 
-@app.get("/payment-result/paid", response_class=HTMLResponse, tags=["Страницы"])
+@app.get("/payment/paid", response_class=HTMLResponse, tags=["Страницы результата оплаты"])
 def payment_paid(): return _page("Тест", "✅ Тестовый платёж — ОПЛАЧЕНО", "green",
                                   "<p style='color:gray'>Sandbox</p>")

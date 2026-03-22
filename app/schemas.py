@@ -22,17 +22,19 @@ class CourseResponse(BaseModel):
 
 class UserCreate(BaseModel):
     email: EmailStr
-    first_name: Optional[str]
-    last_name: Optional[str]
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     phone: Optional[str] = None
 
 
 class UserResponse(BaseModel):
     UserID: int
     email: str
-    first_name: str
-    last_name: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     phone: Optional[str] = None
+    is_blocked: bool
+    deletion_requested: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -73,20 +75,19 @@ class PaymentRecord(BaseModel):
 class UserWithPayments(BaseModel):
     UserID: int
     email: str
-    first_name: str
-    last_name: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    is_blocked: bool
+    deletion_requested: bool
     payments: List[PaymentRecord] = []
 
     model_config = {"from_attributes": True}
 
 
-# Статусы счёта Express-Pay
 EP_STATUS_MAP = {
-    0: "pending",
-    1: "preauth",
-    2: "successful",
-    3: "cancelled",
-    4: "refunded",
-    5: "in_progress",
-    6: "declined",
+    0: "pending", 1: "preauth", 2: "successful",
+    3: "cancelled", 4: "refunded", 5: "in_progress", 6: "declined",
 }
+
+# Сообщение для заблокированных пользователей
+BLOCKED_MSG = "Ваш аккаунт заблокирован, попробуйте позже или обратитесь к администратору"
