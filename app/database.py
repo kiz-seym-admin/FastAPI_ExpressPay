@@ -84,6 +84,12 @@ class Promocode(Base):
         cascade="all, delete-orphan", lazy="selectin",
     )
 
+    owner: Mapped[str | int] = mapped_column(
+        BigInteger, ForeignKey("dealers.DealerID", ondelete="CASCADE"),
+        nullable=False, unique=True, index=True,
+        comment="Ссылка на аккаунт пользователя-дилера"
+    )
+
 
 # ── 2. Commissions ─────────────────────────────────────────────────────────────
 
