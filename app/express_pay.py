@@ -9,25 +9,22 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-EP_TOKEN      = os.getenv("EP_TOKEN",      "a75b74cbcfe446509e8ee874f421bd64")
+EP_TOKEN = os.getenv("EP_TOKEN", "a75b74cbcfe446509e8ee874f421bd64")
 EP_SECRET_WORD = os.getenv("EP_SECRET_WORD", "")
-EP_IS_TEST    = os.getenv("EP_IS_TEST",    "true").lower() == "true"
-BASE_URL      = os.getenv("BASE_URL",      "http://localhost:8000")
+EP_IS_TEST = os.getenv("EP_IS_TEST", "true").lower() == "true"
+BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
 _PROD_API = "https://api.express-pay.by/v1"
 _SAND_API = "https://sandbox-api.express-pay.by/v1"
-CURRENCY_BYN  = 933
-
+CURRENCY_BYN = 933
 
 def _api_base() -> str:
     return _SAND_API if EP_IS_TEST else _PROD_API
-
 
 def _sign(params: dict) -> str:
     raw = "".join(str(v) for v in params.values())
     sig = hmac.new(EP_SECRET_WORD.encode(), raw.encode(), hashlib.sha1)
     return sig.hexdigest().upper()
-
 
 async def create_card_invoice(
     account_no: str, amount: float, info: str,
@@ -48,11 +45,10 @@ async def create_card_invoice(
         params["signature"] = _sign(sign_params)
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(url, data=params)
-    if resp.status_code not in (200, 201):
-        logger.error(f"EP cardinvoices error {resp.status_code}: {resp.text}")
+        if resp.status_code not in (200, 201):
+            logger.error(f"EP cardinvoices error {resp.status_code}: {resp.text}")
         resp.raise_for_status()
-    return resp.json()
-
+        return resp.json()
 
 async def get_card_invoice_status(invoice_no: int) -> dict:
     params = {"Token": EP_TOKEN, "InvoiceNo": str(invoice_no)}
@@ -63,7 +59,6 @@ async def get_card_invoice_status(invoice_no: int) -> dict:
         resp = await client.get(url)
         resp.raise_for_status()
         return resp.json()
-
 
 async def get_qr_code_base64(invoice_no: int) -> Optional[str]:
     params = {"Token": EP_TOKEN, "InvoiceId": str(invoice_no), "ViewType": "base64"}
@@ -78,7 +73,6 @@ async def get_qr_code_base64(invoice_no: int) -> Optional[str]:
     except Exception as exc:
         logger.warning(f"EP QR error: {exc}")
         return None
-
 
 async def run_startup_test() -> dict:
     import uuid

@@ -6,12 +6,10 @@ from qrcode.image.styledpil import StyledPilImage
 from qrcode.image.styles.moduledrawers.pil import RoundedModuleDrawer
 from PIL import Image, ImageDraw, ImageFont
 
-
 def base64_to_png(b64: str) -> bytes:
     if "," in b64:
         b64 = b64.split(",", 1)[1]
     return base64.b64decode(b64)
-
 
 def generate_local_qr(url: str, label: str = "") -> bytes:
     qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=4)
